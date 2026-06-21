@@ -93,6 +93,51 @@ const autoAnalysisEmotionIds = new Set([
   'ordinary',
 ]);
 
+const emotionGroups = [
+  {
+    id: 'bright',
+    label: '밝은 감정',
+    color: '#facc15',
+    emotionIds: ['happiness', 'joy', 'excitement', 'pleasure', 'satisfaction', 'gratitude', 'hope', 'love', 'relief'],
+    reason: '웃음, 볼 주변 움직임, 부드러운 표정 단서가 보여요.',
+  },
+  {
+    id: 'surprised',
+    label: '놀람·당황',
+    color: '#fb923c',
+    emotionIds: ['surprise', 'flustered', 'admiration'],
+    reason: '눈이나 입이 크게 열리는 변화가 보여요.',
+  },
+  {
+    id: 'tense',
+    label: '긴장된 감정',
+    color: '#6366f1',
+    emotionIds: ['nervous', 'worry', 'anxiety', 'fear', 'embarrassment'],
+    reason: '눈썹, 눈, 입 주변에 긴장과 관련된 단서가 보여요.',
+  },
+  {
+    id: 'low',
+    label: '낮은 에너지',
+    color: '#60a5fa',
+    emotionIds: ['tired', 'sadness', 'disappointment', 'loneliness', 'depression', 'bored'],
+    reason: '표정 에너지가 낮거나 눈 주변 움직임이 무거워 보여요.',
+  },
+  {
+    id: 'uncomfortable',
+    label: '불편한 감정',
+    color: '#ef4444',
+    emotionIds: ['anger', 'irritation', 'frustration', 'disgust', 'hate', 'antipathy'],
+    reason: '눈썹, 코, 입술 주변에 불편감과 관련된 단서가 보여요.',
+  },
+  {
+    id: 'neutral',
+    label: '보통',
+    color: '#9ca3af',
+    emotionIds: ['ordinary', 'calm'],
+    reason: '큰 표정 변화가 적어 현재는 중립적인 상태에 가까워 보여요.',
+  },
+];
+
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
@@ -185,22 +230,56 @@ function summarizeBlendshapes(categories = []) {
     depression: sadness * 0.44 + lowEnergy * 0.36,
   };
 
-  const raw = emotionOptions
+  const scoresById = new Map(
+    emotionOptions.map((emotion) => [emotion.id, clamp(formulas[emotion.id] ?? 0)]),
+  );
+
+  const autoCandidates = emotionOptions
     .filter((emotion) => autoAnalysisEmotionIds.has(emotion.id))
     .map((emotion) => ({
       ...emotion,
-      score: clamp(formulas[emotion.id] ?? 0),
+      score: scoresById.get(emotion.id) ?? 0,
       reason: reasonByTone[emotion.tone] || reasonByTone.neutral,
     }))
     .sort((a, b) => b.score - a.score);
 
-  const top = raw[0];
-  const confidence = top ? Math.round(clamp(top.score, 0.1, 0.92) * 100) : 0;
+  const groupRanking = emotionGroups
+    .map((group) => {
+      const groupScores = group.emotionIds.map((id) => scoresById.get(id) ?? 0);
+      const maxScore = Math.max(...groupScores);
+      const averageTopTwo =
+        groupScores
+          .slice()
+          .sort((a, b) => b - a)
+          .slice(0, 2)
+          .reduce((sum, value) => sum + value, 0) / Math.min(2, groupScores.length);
+
+      return {
+        ...group,
+        score: clamp(maxScore * 0.68 + averageTopTwo * 0.32),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const group = groupRanking[0];
+  const raw = emotionOptions
+    .filter((emotion) => group?.emotionIds.includes(emotion.id))
+    .map((emotion) => ({
+      ...emotion,
+      score: scoresById.get(emotion.id) ?? 0,
+      reason: reasonByTone[emotion.tone] || reasonByTone.neutral,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const top = raw[0] || autoCandidates[0];
+  const confidence = group ? Math.round(clamp(group.score, 0.12, 0.92) * 100) : 0;
   const second = raw[1];
 
   return {
     top,
     second,
+    group,
+    groupRanking,
     confidence,
     signals: { smile, frown, jawOpen, eyesWide, blink, browDown, browInnerUp, mouthPress },
     ranking: raw,
@@ -531,7 +610,9 @@ function App() {
       createdAt: new Date().toISOString(),
       selectedEmotionId: selected?.id || 'ordinary',
       selectedEmotion: selected?.label || '보통',
-      predictedEmotion: prediction?.top?.label || '분석 없음',
+      predictedEmotion: prediction?.group
+        ? `${prediction.group.label}: ${prediction.top?.label || '세부 후보 없음'}`
+        : '분석 없음',
       confidence: prediction?.confidence || 0,
       note: note.trim(),
       capturedImage: '',
@@ -582,7 +663,9 @@ function App() {
   useEffect(() => () => stopCamera(), [stopCamera]);
 
   const topEmotion = prediction?.top;
-  const currentOption = emotionOptions.find((item) => item.id === (topEmotion?.id || manualEmotion));
+  const topGroup = prediction?.group;
+  const currentOption = topGroup || emotionOptions.find((item) => item.id === (topEmotion?.id || manualEmotion));
+  const selectedEmotionLabel = emotionOptions.find((item) => item.id === manualEmotion)?.label || '보통';
 
   return (
     <main className="app-shell">
@@ -623,6 +706,13 @@ function App() {
               {message}
             </div>
           </div>
+          <div className="mobile-quick-save">
+            <span>{selectedEmotionLabel}</span>
+            <button className="save-button" onClick={addRecord}>
+              <ClipboardList size={18} />
+              기록하기
+            </button>
+          </div>
         </div>
 
         <aside className="insight-panel">
@@ -636,15 +726,33 @@ function App() {
                 <span>{prediction ? `${prediction.confidence}%` : '--'}</span>
               </div>
               <div>
-                <p className="result-label">{topEmotion?.label || '대기 중'}</p>
+                <p className="result-label">{topGroup?.label || '대기 중'}</p>
                 <p className="result-copy">
-                  {topEmotion?.reason || '카메라를 켜고 얼굴을 화면 중앙에 맞춰주세요.'}
+                  {topGroup?.reason || '카메라를 켜고 얼굴을 화면 중앙에 맞춰주세요.'}
                 </p>
               </div>
             </div>
 
+            {topEmotion && (
+              <div className="detail-candidates">
+                {(prediction?.ranking || []).slice(0, 4).map((item) => (
+                  <button
+                    key={item.id}
+                    className={manualEmotion === item.id ? 'active' : ''}
+                    onClick={() => {
+                      setManualEmotion(item.id);
+                      setEmotionEditedByUser(true);
+                    }}
+                    style={{ '--emotion': item.color }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="bars">
-              {(prediction?.ranking || []).slice(0, 8).map((item) => (
+              {(prediction?.groupRanking || []).slice(0, 6).map((item) => (
                 <div className="bar-row" key={item.id}>
                   <span>{item.label}</span>
                   <div className="bar-track">
