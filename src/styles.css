@@ -149,6 +149,10 @@ h2 {
   font-weight: 800;
 }
 
+.mobile-camera-button {
+  display: none;
+}
+
 .controls {
   display: grid;
   grid-template-columns: auto 44px minmax(0, 1fr);
@@ -179,6 +183,14 @@ h2 {
   background: #155e75;
   color: #ffffff;
   padding: 0 16px;
+}
+
+.save-button {
+  background: #dc2626;
+}
+
+.save-button:hover {
+  background: #b91c1c;
 }
 
 .utility-button,
@@ -491,7 +503,31 @@ textarea:focus {
   }
 
   .controls {
-    grid-template-columns: 1fr 44px;
+    grid-template-columns: 44px 1fr;
+  }
+
+  .controls .primary-button {
+    display: none;
+  }
+
+  .mobile-camera-button {
+    position: absolute;
+    z-index: 3;
+    top: 10px;
+    left: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 13px;
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.74);
+    color: #ffffff;
+    font-weight: 900;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(8px);
   }
 
   .status {

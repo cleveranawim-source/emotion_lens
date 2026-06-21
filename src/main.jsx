@@ -683,6 +683,10 @@ function App() {
           </header>
 
           <div className="stage">
+            <button className="mobile-camera-button" onClick={cameraOn ? stopCamera : startCamera}>
+              {cameraOn ? <Pause size={18} /> : <Play size={18} />}
+              {cameraOn ? '멈추기' : '카메라 켜기'}
+            </button>
             <video ref={videoRef} playsInline muted className={cameraOn ? 'visible' : ''} />
             <canvas ref={canvasRef} />
             {!cameraOn && (
