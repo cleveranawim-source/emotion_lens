@@ -1,0 +1,754 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  Activity,
+  Camera,
+  Check,
+  ClipboardList,
+  Download,
+  Eye,
+  Info,
+  Pause,
+  Play,
+  RefreshCcw,
+  Shield,
+  Trash2,
+  VideoOff,
+} from 'lucide-react';
+import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import './styles.css';
+
+const STORAGE_KEY = 'emotion-camera-checkin.records.v1';
+const ASSET_BASE = import.meta.env.BASE_URL;
+const MODEL_URL = `${ASSET_BASE}models/face_landmarker.task`;
+const WASM_URL = `${ASSET_BASE}mediapipe`;
+
+const emotionOptions = [
+  { id: 'happiness', label: '행복', color: '#facc15', tone: 'positive' },
+  { id: 'joy', label: '기쁨', color: '#eab308', tone: 'positive' },
+  { id: 'gratitude', label: '감사', color: '#10b981', tone: 'positive' },
+  { id: 'hope', label: '희망', color: '#14b8a6', tone: 'positive' },
+  { id: 'excitement', label: '신남', color: '#f472b6', tone: 'positive' },
+  { id: 'love', label: '사랑', color: '#ec4899', tone: 'positive' },
+  { id: 'pleasure', label: '즐거움', color: '#f9a8d4', tone: 'positive' },
+  { id: 'satisfaction', label: '만족', color: '#22c55e', tone: 'positive' },
+  { id: 'wish', label: '소망', color: '#34d399', tone: 'positive' },
+  { id: 'cozy', label: '포근', color: '#4ade80', tone: 'positive' },
+  { id: 'admiration', label: '감탄', color: '#fb7185', tone: 'positive' },
+  { id: 'passion', label: '열정', color: '#f472b6', tone: 'positive' },
+  { id: 'generosity', label: '너그러움', color: '#2dd4bf', tone: 'positive' },
+  { id: 'relief', label: '안심', color: '#2dd4bf', tone: 'calm' },
+  { id: 'calm', label: '차분', color: '#86efac', tone: 'calm' },
+  { id: 'solitude', label: '고독', color: '#bbf7d0', tone: 'low' },
+  { id: 'sympathy', label: '측은', color: '#2dd4bf', tone: 'low' },
+  { id: 'pride', label: '자랑', color: '#f9a8d4', tone: 'positive' },
+  { id: 'surprise', label: '놀람', color: '#fb923c', tone: 'high' },
+  { id: 'jealousy', label: '질투', color: '#fdba74', tone: 'negative' },
+  { id: 'ordinary', label: '보통', color: '#9ca3af', tone: 'neutral' },
+  { id: 'timid', label: '소심', color: '#7dd3fc', tone: 'low' },
+  { id: 'longing', label: '그리움', color: '#60a5fa', tone: 'low' },
+  { id: 'embarrassment', label: '부끄러움', color: '#38bdf8', tone: 'low' },
+  { id: 'nervous', label: '긴장', color: '#60a5fa', tone: 'tense' },
+  { id: 'remorse', label: '뉘우침', color: '#60a5fa', tone: 'low' },
+  { id: 'confusing', label: '난해', color: '#60a5fa', tone: 'tense' },
+  { id: 'tired', label: '피곤', color: '#60a5fa', tone: 'low' },
+  { id: 'worry', label: '걱정', color: '#6366f1', tone: 'tense' },
+  { id: 'bored', label: '따분', color: '#6366f1', tone: 'low' },
+  { id: 'regret', label: '후회', color: '#6366f1', tone: 'low' },
+  { id: 'flustered', label: '당황', color: '#fb923c', tone: 'high' },
+  { id: 'desire', label: '바람', color: '#fb923c', tone: 'positive' },
+  { id: 'irritation', label: '짜증', color: '#fb6b3b', tone: 'negative' },
+  { id: 'sadness', label: '슬픔', color: '#a78bfa', tone: 'negative' },
+  { id: 'disappointment', label: '실망', color: '#a78bfa', tone: 'negative' },
+  { id: 'disgust', label: '역겨움', color: '#a855f7', tone: 'negative' },
+  { id: 'giving-up', label: '포기', color: '#a855f7', tone: 'negative' },
+  { id: 'hate', label: '미움', color: '#ef4444', tone: 'negative' },
+  { id: 'antipathy', label: '반감', color: '#ef4444', tone: 'negative' },
+  { id: 'anger', label: '화', color: '#f43f5e', tone: 'negative' },
+  { id: 'anxiety', label: '불안', color: '#71717a', tone: 'tense' },
+  { id: 'frustration', label: '좌절', color: '#818cf8', tone: 'negative' },
+  { id: 'fear', label: '두려움', color: '#818cf8', tone: 'tense' },
+  { id: 'loneliness', label: '외로움', color: '#818cf8', tone: 'low' },
+  { id: 'depression', label: '우울', color: '#d1d5db', tone: 'negative' },
+];
+
+const autoAnalysisEmotionIds = new Set([
+  'happiness',
+  'joy',
+  'excitement',
+  'pleasure',
+  'satisfaction',
+  'surprise',
+  'flustered',
+  'nervous',
+  'worry',
+  'tired',
+  'sadness',
+  'disappointment',
+  'anger',
+  'irritation',
+  'anxiety',
+  'fear',
+  'embarrassment',
+  'ordinary',
+]);
+
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function scoreOf(categories, name) {
+  return categories.find((item) => item.categoryName === name)?.score ?? 0;
+}
+
+function summarizeBlendshapes(categories = []) {
+  const smile = Math.max(scoreOf(categories, 'mouthSmileLeft'), scoreOf(categories, 'mouthSmileRight'));
+  const frown = Math.max(scoreOf(categories, 'mouthFrownLeft'), scoreOf(categories, 'mouthFrownRight'));
+  const jawOpen = scoreOf(categories, 'jawOpen');
+  const eyesWide = Math.max(scoreOf(categories, 'eyeWideLeft'), scoreOf(categories, 'eyeWideRight'));
+  const blink = Math.max(scoreOf(categories, 'eyeBlinkLeft'), scoreOf(categories, 'eyeBlinkRight'));
+  const browDown = Math.max(scoreOf(categories, 'browDownLeft'), scoreOf(categories, 'browDownRight'));
+  const browInnerUp = scoreOf(categories, 'browInnerUp');
+  const mouthPress = Math.max(scoreOf(categories, 'mouthPressLeft'), scoreOf(categories, 'mouthPressRight'));
+  const mouthPucker = scoreOf(categories, 'mouthPucker');
+  const cheekSquint = Math.max(scoreOf(categories, 'cheekSquintLeft'), scoreOf(categories, 'cheekSquintRight'));
+  const noseSneer = Math.max(scoreOf(categories, 'noseSneerLeft'), scoreOf(categories, 'noseSneerRight'));
+  const eyeSquint = Math.max(scoreOf(categories, 'eyeSquintLeft'), scoreOf(categories, 'eyeSquintRight'));
+
+  const positive = clamp(smile * 1.08 + cheekSquint * 0.45 - browDown * 0.22 - frown * 0.35);
+  const highEnergy = clamp(jawOpen * 0.45 + eyesWide * 0.42 + smile * 0.35);
+  const surprise = clamp(jawOpen * 0.75 + eyesWide * 0.58 + browInnerUp * 0.25);
+  const tension = clamp(browDown * 0.52 + mouthPress * 0.42 + blink * 0.24 + eyeSquint * 0.22);
+  const sadness = clamp(browInnerUp * 0.48 + frown * 0.55 + mouthPress * 0.2 + (0.2 - smile) * 0.45);
+  const anger = clamp(browDown * 0.68 + noseSneer * 0.38 + mouthPress * 0.34 + eyeSquint * 0.26);
+  const disgust = clamp(noseSneer * 0.72 + mouthPucker * 0.34 + browDown * 0.28);
+  const lowEnergy = clamp(blink * 0.36 + (0.28 - smile) * 0.55 + mouthPress * 0.18);
+  const calmScore = clamp(0.5 - Math.max(jawOpen, eyesWide, browDown, frown, mouthPress, noseSneer) * 0.48);
+  const shy = clamp(smile * 0.32 + blink * 0.28 + browInnerUp * 0.22 + mouthPress * 0.18);
+
+  const reasonByTone = {
+    positive: '입꼬리와 볼 주변의 밝은 표정 단서가 보여요.',
+    calm: '큰 표정 변화가 적어 안정적인 상태에 가까워 보여요.',
+    neutral: '뚜렷하게 강한 표정 변화가 크지 않아요.',
+    high: '눈, 입, 얼굴 근육의 변화가 비교적 크게 보여요.',
+    tense: '눈썹과 입 주변에 힘이 들어간 단서가 보여요.',
+    low: '표정 에너지가 낮거나 눈 주변 움직임이 차분하게 보여요.',
+    negative: '눈썹, 입술, 코 주변에 불편감과 관련된 단서가 보여요.',
+  };
+
+  const formulas = {
+    happiness: positive * 0.9 + calmScore * 0.12,
+    joy: positive * 0.78 + highEnergy * 0.18,
+    gratitude: positive * 0.62 + calmScore * 0.24,
+    hope: positive * 0.45 + eyesWide * 0.25 + calmScore * 0.2,
+    excitement: positive * 0.62 + highEnergy * 0.42,
+    love: positive * 0.58 + calmScore * 0.22 + shy * 0.12,
+    pleasure: positive * 0.74 + highEnergy * 0.16,
+    satisfaction: positive * 0.52 + calmScore * 0.38,
+    wish: positive * 0.3 + browInnerUp * 0.3 + calmScore * 0.2,
+    cozy: calmScore * 0.52 + positive * 0.28,
+    admiration: surprise * 0.5 + positive * 0.42,
+    passion: positive * 0.35 + highEnergy * 0.48,
+    generosity: calmScore * 0.42 + positive * 0.34,
+    relief: calmScore * 0.55 + positive * 0.18,
+    calm: calmScore * 0.32 + positive * 0.08,
+    solitude: lowEnergy * 0.42 + calmScore * 0.2,
+    sympathy: sadness * 0.32 + browInnerUp * 0.28 + calmScore * 0.14,
+    pride: positive * 0.42 + mouthPress * 0.15 + calmScore * 0.18,
+    surprise,
+    jealousy: anger * 0.24 + sadness * 0.24 + mouthPress * 0.2,
+    ordinary: calmScore * 0.62 + (0.24 - Math.max(positive, tension, sadness, surprise)) * 0.5,
+    timid: shy * 0.5 + tension * 0.22,
+    longing: sadness * 0.34 + browInnerUp * 0.28 + lowEnergy * 0.24,
+    embarrassment: shy * 0.58 + positive * 0.12,
+    nervous: tension * 0.72 + eyesWide * 0.18,
+    remorse: sadness * 0.36 + mouthPress * 0.25 + browInnerUp * 0.18,
+    confusing: tension * 0.38 + eyeSquint * 0.3 + browInnerUp * 0.16,
+    tired: lowEnergy * 0.62 + blink * 0.24,
+    worry: tension * 0.48 + browInnerUp * 0.3,
+    bored: lowEnergy * 0.5 + calmScore * 0.18 - positive * 0.1,
+    regret: sadness * 0.4 + mouthPress * 0.25,
+    flustered: surprise * 0.42 + tension * 0.36,
+    desire: positive * 0.24 + browInnerUp * 0.24 + mouthPucker * 0.2,
+    irritation: anger * 0.48 + tension * 0.28,
+    sadness: sadness * 0.78,
+    disappointment: sadness * 0.52 + mouthPress * 0.24,
+    disgust,
+    'giving-up': sadness * 0.38 + lowEnergy * 0.34,
+    hate: anger * 0.42 + disgust * 0.32,
+    antipathy: anger * 0.32 + disgust * 0.32 + mouthPress * 0.16,
+    anger: anger * 0.78,
+    anxiety: tension * 0.58 + eyesWide * 0.22 + browInnerUp * 0.16,
+    frustration: sadness * 0.38 + anger * 0.28 + mouthPress * 0.22,
+    fear: tension * 0.42 + eyesWide * 0.36 + browInnerUp * 0.24,
+    loneliness: sadness * 0.42 + lowEnergy * 0.28 + calmScore * 0.1,
+    depression: sadness * 0.44 + lowEnergy * 0.36,
+  };
+
+  const raw = emotionOptions
+    .filter((emotion) => autoAnalysisEmotionIds.has(emotion.id))
+    .map((emotion) => ({
+      ...emotion,
+      score: clamp(formulas[emotion.id] ?? 0),
+      reason: reasonByTone[emotion.tone] || reasonByTone.neutral,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const top = raw[0];
+  const confidence = top ? Math.round(clamp(top.score, 0.1, 0.92) * 100) : 0;
+  const second = raw[1];
+
+  return {
+    top,
+    second,
+    confidence,
+    signals: { smile, frown, jawOpen, eyesWide, blink, browDown, browInnerUp, mouthPress },
+    ranking: raw,
+  };
+}
+
+function formatTime(value) {
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function loadRecords() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function getCameraErrorMessage(error) {
+  const name = error?.name || '';
+
+  if (!window.isSecureContext) {
+    return '브라우저 보안 설정 때문에 카메라를 열 수 없습니다. http://127.0.0.1:5174/ 또는 http://localhost:5174/로 열어주세요.';
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return '이 브라우저에서는 카메라 기능을 지원하지 않습니다. Chrome이나 Edge에서 다시 열어주세요.';
+  }
+
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return '카메라 권한이 차단되어 있습니다. 주소창 왼쪽의 카메라 권한을 허용한 뒤 다시 눌러주세요.';
+  }
+
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return '사용할 수 있는 카메라를 찾지 못했습니다. 카메라 연결 상태를 확인해주세요.';
+  }
+
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return '다른 앱이 카메라를 사용 중일 수 있습니다. Zoom, Meet, Photo Booth 등을 끄고 다시 시도해주세요.';
+  }
+
+  return `카메라를 열 수 없습니다. ${error?.message || '브라우저 권한과 카메라 연결을 확인해주세요.'}`;
+}
+
+function drawRoundedRect(context, x, y, width, height, radius) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.arcTo(x + width, y, x + width, y + height, radius);
+  context.arcTo(x + width, y + height, x, y + height, radius);
+  context.arcTo(x, y + height, x, y, radius);
+  context.arcTo(x, y, x + width, y, radius);
+  context.closePath();
+}
+
+function drawMirroredCoverVideo(context, video, x, y, width, height) {
+  const videoRatio = video.videoWidth / video.videoHeight;
+  const boxRatio = width / height;
+  let sourceWidth = video.videoWidth;
+  let sourceHeight = video.videoHeight;
+  let sourceX = 0;
+  let sourceY = 0;
+
+  if (videoRatio > boxRatio) {
+    sourceWidth = video.videoHeight * boxRatio;
+    sourceX = (video.videoWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = video.videoWidth / boxRatio;
+    sourceY = (video.videoHeight - sourceHeight) / 2;
+  }
+
+  context.save();
+  drawRoundedRect(context, x, y, width, height, 14);
+  context.clip();
+  context.translate(x + width, y);
+  context.scale(-1, 1);
+  context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+  context.restore();
+}
+
+function createEmotionCardImage(video, record) {
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    return '';
+  }
+
+  const captureCanvas = document.createElement('canvas');
+  captureCanvas.width = 720;
+  captureCanvas.height = 260;
+
+  const context = captureCanvas.getContext('2d');
+  context.fillStyle = '#f8fbff';
+  context.fillRect(0, 0, captureCanvas.width, captureCanvas.height);
+
+  context.strokeStyle = '#d8e3ed';
+  context.lineWidth = 2;
+  context.strokeRect(1, 1, captureCanvas.width - 2, captureCanvas.height - 2);
+
+  drawMirroredCoverVideo(context, video, 16, 22, 208, 156);
+
+  context.fillStyle = '#536b82';
+  context.font = '700 29px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.fillText(formatTime(record.createdAt), 254, 58);
+
+  context.fillStyle = '#111827';
+  context.font = '900 38px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.fillText(record.selectedEmotion, 254, 112);
+
+  context.fillStyle = '#33475f';
+  context.font = '700 27px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  const estimate = record.confidence
+    ? `앱 추정: ${record.predictedEmotion} (${record.confidence}%)`
+    : `앱 추정: ${record.predictedEmotion}`;
+  context.fillText(estimate, 254, 164);
+
+  if (record.note) {
+    context.fillStyle = '#64748b';
+    context.font = '600 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const clippedNote = record.note.length > 22 ? `${record.note.slice(0, 22)}...` : record.note;
+    context.fillText(clippedNote, 254, 210);
+  }
+
+  return captureCanvas.toDataURL('image/jpeg', 0.86);
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mime });
+}
+
+function downloadCapturedImage(dataUrl, record) {
+  if (!dataUrl) return false;
+
+  const fileDate = new Date(record.createdAt).toISOString().replaceAll(':', '-').slice(0, 19);
+  const filename = `emotion-checkin-${fileDate}-${record.selectedEmotion}.jpg`;
+  const blob = dataUrlToBlob(dataUrl);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
+function App() {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const landmarkerRef = useRef(null);
+  const rafRef = useRef(0);
+  const streamRef = useRef(null);
+  const lastVideoTimeRef = useRef(-1);
+
+  const [status, setStatus] = useState('ready');
+  const [message, setMessage] = useState('카메라를 켜면 표정 단서를 분석합니다.');
+  const [prediction, setPrediction] = useState(null);
+  const [manualEmotion, setManualEmotion] = useState('ordinary');
+  const [emotionEditedByUser, setEmotionEditedByUser] = useState(false);
+  const [note, setNote] = useState('');
+  const [records, setRecords] = useState(loadRecords);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [downloadOnSave, setDownloadOnSave] = useState(true);
+
+  const todayRecords = useMemo(() => {
+    const today = new Date().toDateString();
+    return records.filter((record) => new Date(record.createdAt).toDateString() === today);
+  }, [records]);
+
+  const saveRecords = useCallback((nextRecords) => {
+    setRecords(nextRecords);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+  }, []);
+
+  const drawOverlay = useCallback((result) => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    const context = canvas.getContext('2d');
+    const rect = video.getBoundingClientRect();
+    canvas.width = Math.round(rect.width);
+    canvas.height = Math.round(rect.height);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const face = result?.faceLandmarks?.[0];
+    if (!face) return;
+
+    const xs = face.map((point) => point.x * canvas.width);
+    const ys = face.map((point) => point.y * canvas.height);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const padding = 16;
+
+    context.strokeStyle = '#22c55e';
+    context.lineWidth = 3;
+    context.setLineDash([10, 8]);
+    context.strokeRect(
+      minX - padding,
+      minY - padding,
+      maxX - minX + padding * 2,
+      maxY - minY + padding * 2,
+    );
+    context.setLineDash([]);
+  }, []);
+
+  const runDetection = useCallback(() => {
+    const landmarker = landmarkerRef.current;
+    const video = videoRef.current;
+
+    if (!landmarker || !video || video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(runDetection);
+      return;
+    }
+
+    if (lastVideoTimeRef.current !== video.currentTime) {
+      lastVideoTimeRef.current = video.currentTime;
+      const result = landmarker.detectForVideo(video, performance.now());
+      drawOverlay(result);
+
+      if (result.faceBlendshapes?.[0]?.categories?.length) {
+        const summary = summarizeBlendshapes(result.faceBlendshapes[0].categories);
+        setPrediction(summary);
+        setManualEmotion((current) => (emotionEditedByUser ? current : summary.top.id));
+        setMessage('표정 단서를 읽고 있어요. 결과는 추정값으로만 봐주세요.');
+      } else {
+        setPrediction(null);
+        setMessage('얼굴이 화면 중앙에 오도록 조금만 맞춰주세요.');
+      }
+    }
+
+    rafRef.current = requestAnimationFrame(runDetection);
+  }, [drawOverlay, emotionEditedByUser]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      setStatus('loading');
+      setMessage('카메라를 먼저 여는 중입니다.');
+
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error('camera-api-unavailable');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      setCameraOn(true);
+      setMessage('카메라는 켜졌고, 표정 분석 모델을 준비하는 중입니다.');
+
+      if (!landmarkerRef.current) {
+        const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+        const modelOptions = {
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+        };
+
+        try {
+          landmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+            ...modelOptions,
+            baseOptions: {
+              modelAssetPath: MODEL_URL,
+              delegate: 'GPU',
+            },
+          });
+        } catch {
+          landmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+            ...modelOptions,
+            baseOptions: {
+              modelAssetPath: MODEL_URL,
+              delegate: 'CPU',
+            },
+          });
+        }
+      }
+      setStatus('running');
+      rafRef.current = requestAnimationFrame(runDetection);
+    } catch (error) {
+      if (streamRef.current) {
+        setCameraOn(true);
+        setStatus('error');
+        setMessage(`카메라는 켜졌지만 분석 모델을 불러오지 못했습니다. ${error?.message || ''}`.trim());
+        return;
+      }
+
+      setStatus('error');
+      setCameraOn(false);
+      setMessage(getCameraErrorMessage(error));
+    }
+  }, [runDetection]);
+
+  const stopCamera = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    const canvas = canvasRef.current;
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    setCameraOn(false);
+    setStatus('ready');
+    setMessage('카메라가 꺼졌습니다.');
+  }, []);
+
+  const addRecord = () => {
+    const selected = emotionOptions.find((item) => item.id === manualEmotion);
+    const record = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      selectedEmotionId: selected?.id || 'ordinary',
+      selectedEmotion: selected?.label || '보통',
+      predictedEmotion: prediction?.top?.label || '분석 없음',
+      confidence: prediction?.confidence || 0,
+      note: note.trim(),
+      capturedImage: '',
+    };
+    record.capturedImage = createEmotionCardImage(videoRef.current, record);
+    saveRecords([record, ...records].slice(0, 24));
+    if (downloadOnSave && record.capturedImage) {
+      downloadCapturedImage(record.capturedImage, record);
+    }
+    setNote('');
+    setEmotionEditedByUser(false);
+    setManualEmotion(prediction?.top?.id || 'ordinary');
+    setMessage(
+      downloadOnSave && record.capturedImage
+        ? '기록과 얼굴 캡처를 저장했습니다. 브라우저가 이미지 다운로드를 요청했어요.'
+        : '기록을 저장했습니다.',
+    );
+  };
+
+  const deleteRecord = (id) => {
+    saveRecords(records.filter((record) => record.id !== id));
+  };
+
+  const exportRecords = () => {
+    const csv = [
+      ['날짜', '사용자 확인 감정', '앱 추정', '확신도', '얼굴 캡처', '메모'],
+      ...records.map((record) => [
+        formatTime(record.createdAt),
+        record.selectedEmotion,
+        record.predictedEmotion,
+        `${record.confidence}%`,
+        record.capturedImage ? '있음' : '없음',
+        record.note.replaceAll('"', '""'),
+      ]),
+    ]
+      .map((row) => row.map((cell) => `"${cell}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'emotion-checkin-records.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const topEmotion = prediction?.top;
+  const currentOption = emotionOptions.find((item) => item.id === (topEmotion?.id || manualEmotion));
+
+  return (
+    <main className="app-shell">
+      <section className="workspace">
+        <div className="camera-panel">
+          <header className="topbar">
+            <div>
+              <p className="eyebrow">표정 기반 감정 체크인</p>
+              <h1>마음 렌즈</h1>
+            </div>
+            <div className="privacy-badge" title="사진과 영상은 저장하지 않습니다.">
+              <Shield size={18} />
+              로컬 기록
+            </div>
+          </header>
+
+          <div className="stage">
+            <video ref={videoRef} playsInline muted className={cameraOn ? 'visible' : ''} />
+            <canvas ref={canvasRef} />
+            {!cameraOn && (
+              <div className="empty-camera">
+                <Camera size={42} />
+                <span>카메라 준비</span>
+              </div>
+            )}
+          </div>
+
+          <div className="controls">
+            <button className="primary-button" onClick={cameraOn ? stopCamera : startCamera}>
+              {cameraOn ? <Pause size={19} /> : <Play size={19} />}
+              {cameraOn ? '멈추기' : '카메라 켜기'}
+            </button>
+            <button className="icon-button" onClick={startCamera} disabled={status === 'loading'} title="다시 분석">
+              <RefreshCcw size={19} />
+            </button>
+            <div className={`status ${status}`}>
+              <Activity size={16} />
+              {message}
+            </div>
+          </div>
+        </div>
+
+        <aside className="insight-panel">
+          <div className="result-card">
+            <div className="section-title">
+              <Eye size={18} />
+              현재 후보
+            </div>
+            <div className="emotion-meter" style={{ '--accent': currentOption?.color || '#3b82f6' }}>
+              <div className="meter-ring">
+                <span>{prediction ? `${prediction.confidence}%` : '--'}</span>
+              </div>
+              <div>
+                <p className="result-label">{topEmotion?.label || '대기 중'}</p>
+                <p className="result-copy">
+                  {topEmotion?.reason || '카메라를 켜고 얼굴을 화면 중앙에 맞춰주세요.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="bars">
+              {(prediction?.ranking || []).slice(0, 8).map((item) => (
+                <div className="bar-row" key={item.id}>
+                  <span>{item.label}</span>
+                  <div className="bar-track">
+                    <div style={{ width: `${Math.round(item.score * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="checkin-card">
+            <div className="section-title">
+              <Check size={18} />
+              내가 확인한 감정
+            </div>
+            <div className="emotion-grid">
+              {emotionOptions.map((emotion) => (
+                <button
+                  key={emotion.id}
+                  className={manualEmotion === emotion.id ? 'selected' : ''}
+                  onClick={() => {
+                    setManualEmotion(emotion.id);
+                    setEmotionEditedByUser(true);
+                  }}
+                  style={{ '--emotion': emotion.color }}
+                >
+                  {emotion.label}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="지금 감정이 생긴 상황을 짧게 적어보세요."
+              rows={3}
+            />
+            <label className="download-toggle">
+              <input
+                type="checkbox"
+                checked={downloadOnSave}
+                onChange={(event) => setDownloadOnSave(event.target.checked)}
+              />
+              <span>기록할 때 얼굴 캡처 파일도 저장</span>
+            </label>
+            <button className="save-button" onClick={addRecord}>
+              <ClipboardList size={18} />
+              기록하기
+            </button>
+          </div>
+        </aside>
+      </section>
+
+      <section className="records-panel">
+        <div className="records-header">
+          <div>
+            <p className="eyebrow">오늘 {todayRecords.length}개 기록</p>
+            <h2>감정 기록</h2>
+          </div>
+          <button className="utility-button" onClick={exportRecords} disabled={!records.length}>
+            <Download size={17} />
+            CSV
+          </button>
+        </div>
+
+        <div className="privacy-note">
+          <Info size={17} />
+          기록하기를 누르면 얼굴 캡처 1장이 앱 기록에 남고, 옵션이 켜져 있으면 이미지 파일 저장도 요청됩니다. 브라우저에 따라 다운로드 폴더, 사진 앱, 파일 앱 중 한 곳으로 저장될 수 있습니다.
+        </div>
+
+        <div className="records-list">
+          {records.length ? (
+            records.map((record) => (
+              <article className="record-item" key={record.id}>
+                {record.capturedImage ? (
+                  <img className="record-photo" src={record.capturedImage} alt={`${record.selectedEmotion} 기록 얼굴 캡처`} />
+                ) : (
+                  <div className="record-photo placeholder">
+                    <Camera size={22} />
+                  </div>
+                )}
+                <div>
+                  <time>{formatTime(record.createdAt)}</time>
+                  <strong>{record.selectedEmotion}</strong>
+                  <p>
+                    앱 추정: {record.predictedEmotion}
+                    {record.confidence ? ` (${record.confidence}%)` : ''}
+                  </p>
+                  {record.note && <p className="note">{record.note}</p>}
+                </div>
+                <button className="icon-button subtle" onClick={() => deleteRecord(record.id)} title="기록 삭제">
+                  <Trash2 size={17} />
+                </button>
+              </article>
+            ))
+          ) : (
+            <div className="empty-records">
+              <VideoOff size={28} />
+              아직 저장된 기록이 없습니다.
+            </div>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App />);
