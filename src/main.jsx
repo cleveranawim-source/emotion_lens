@@ -14,6 +14,7 @@ import {
   Shield,
   Trash2,
   VideoOff,
+  X,
 } from 'lucide-react';
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import './styles.css';
@@ -559,6 +560,7 @@ function App() {
   const [records, setRecords] = useState(loadRecords);
   const [cameraOn, setCameraOn] = useState(false);
   const [downloadOnSave, setDownloadOnSave] = useState(true);
+  const [previewRecord, setPreviewRecord] = useState(null);
 
   const todayRecords = useMemo(() => {
     const today = new Date().toDateString();
@@ -785,6 +787,19 @@ function App() {
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
+  useEffect(() => {
+    if (!previewRecord) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setPreviewRecord(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewRecord]);
+
   const topEmotion = prediction?.top;
   const topGroup = prediction?.group;
   const currentOption = topGroup || emotionOptions.find((item) => item.id === (topEmotion?.id || manualEmotion));
@@ -954,7 +969,13 @@ function App() {
             records.map((record) => (
               <article className="record-item" key={record.id}>
                 {record.capturedImage ? (
-                  <img className="record-photo" src={record.capturedImage} alt={`${record.selectedEmotion} 기록 얼굴 캡처`} />
+                  <button
+                    className="record-photo-button"
+                    onClick={() => setPreviewRecord(record)}
+                    title="캡처 이미지 크게 보기"
+                  >
+                    <img className="record-photo" src={record.capturedImage} alt={`${record.selectedEmotion} 기록 얼굴 캡처`} />
+                  </button>
                 ) : (
                   <div className="record-photo placeholder">
                     <Camera size={22} />
@@ -982,6 +1003,29 @@ function App() {
           )}
         </div>
       </section>
+
+      {previewRecord && (
+        <div className="preview-backdrop" role="presentation" onClick={() => setPreviewRecord(null)}>
+          <div className="preview-dialog" role="dialog" aria-modal="true" aria-label="캡처 이미지 미리보기" onClick={(event) => event.stopPropagation()}>
+            <div className="preview-toolbar">
+              <div>
+                <time>{formatTime(previewRecord.createdAt)}</time>
+                <strong>{previewRecord.selectedEmotion}</strong>
+              </div>
+              <div className="preview-actions">
+                <button className="utility-button" onClick={() => downloadCapturedImage(previewRecord.capturedImage, previewRecord)}>
+                  <Download size={17} />
+                  저장
+                </button>
+                <button className="icon-button" onClick={() => setPreviewRecord(null)} title="닫기">
+                  <X size={19} />
+                </button>
+              </div>
+            </div>
+            <img className="preview-image" src={previewRecord.capturedImage} alt={`${previewRecord.selectedEmotion} 기록 미리보기`} />
+          </div>
+        </div>
+      )}
     </main>
   );
 }
