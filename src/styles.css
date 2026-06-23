@@ -454,19 +454,62 @@ textarea:focus {
 .capture-toggle {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   margin: 0 0 12px;
-  color: #40566d;
+  border: 1px solid #cbd8e4;
+  border-radius: 8px;
+  background: #f8fbfd;
+  color: #26394f;
+  padding: 10px 12px;
   font-size: 0.94rem;
   font-weight: 850;
   line-height: 1.35;
+  cursor: pointer;
 }
 
 .capture-toggle input {
-  width: 19px;
-  height: 19px;
-  accent-color: #155e75;
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-switch {
+  position: relative;
   flex: 0 0 auto;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  background: #94a3b8;
+  transition: background 160ms ease;
+}
+
+.toggle-switch span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.28);
+  transition: transform 160ms ease;
+}
+
+.capture-toggle input:checked + .toggle-switch {
+  background: #155e75;
+}
+
+.capture-toggle input:checked + .toggle-switch span {
+  transform: translateX(20px);
+}
+
+.capture-toggle input:focus-visible + .toggle-switch {
+  outline: 3px solid rgba(21, 94, 117, 0.28);
+  outline-offset: 2px;
+}
+
+.toggle-copy {
+  color: #26394f;
 }
 
 .save-button {

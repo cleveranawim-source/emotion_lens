@@ -1002,7 +1002,12 @@ function App() {
                 checked={includeFaceCapture}
                 onChange={(event) => setIncludeFaceCapture(event.target.checked)}
               />
-              <span>얼굴 캡처 포함</span>
+              <span className="toggle-switch" aria-hidden="true">
+                <span />
+              </span>
+              <span className="toggle-copy">
+                얼굴 캡처 {includeFaceCapture ? '포함됨' : '제외됨'}
+              </span>
             </label>
             <button className="save-button" onClick={addRecord}>
               <ClipboardList size={18} />
