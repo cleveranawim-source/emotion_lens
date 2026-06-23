@@ -364,6 +364,68 @@ function drawMirroredCoverVideo(context, video, x, y, width, height) {
   context.restore();
 }
 
+function drawProgressRing(context, x, y, radius, percent, color) {
+  const start = -Math.PI / 2;
+  const end = start + Math.PI * 2 * clamp(percent / 100);
+
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.strokeStyle = '#e2ebf2';
+  context.lineWidth = 14;
+  context.stroke();
+
+  context.beginPath();
+  context.arc(x, y, radius, start, end);
+  context.strokeStyle = color;
+  context.lineWidth = 14;
+  context.lineCap = 'round';
+  context.stroke();
+
+  context.fillStyle = '#111827';
+  context.font = '900 26px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(`${percent}%`, x, y);
+  context.textAlign = 'start';
+  context.textBaseline = 'alphabetic';
+}
+
+function drawPill(context, x, y, width, height, text, color, active = false) {
+  drawRoundedRect(context, x, y, width, height, 10);
+  context.fillStyle = active ? '#ffffff' : '#f8fbff';
+  context.fill();
+  context.strokeStyle = active ? color : '#cfdae5';
+  context.lineWidth = active ? 4 : 2;
+  context.stroke();
+
+  context.fillStyle = '#172033';
+  context.font = '800 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, x + width / 2, y + height / 2 + 1);
+  context.textAlign = 'start';
+  context.textBaseline = 'alphabetic';
+}
+
+function drawBarRow(context, label, score, x, y, width, color) {
+  const labelWidth = 142;
+  const barX = x + labelWidth;
+  const barWidth = width - labelWidth;
+  const percentWidth = Math.max(8, barWidth * clamp(score));
+
+  context.fillStyle = '#33475f';
+  context.font = '800 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.fillText(label, x, y + 18);
+
+  drawRoundedRect(context, barX, y + 5, barWidth, 16, 8);
+  context.fillStyle = '#e4edf4';
+  context.fill();
+
+  drawRoundedRect(context, barX, y + 5, percentWidth, 16, 8);
+  context.fillStyle = color;
+  context.fill();
+}
+
 function createEmotionCardImage(video, record) {
   if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
     return '';
@@ -371,7 +433,7 @@ function createEmotionCardImage(video, record) {
 
   const captureCanvas = document.createElement('canvas');
   captureCanvas.width = 720;
-  captureCanvas.height = 260;
+  captureCanvas.height = 720;
 
   const context = captureCanvas.getContext('2d');
   context.fillStyle = '#f8fbff';
@@ -403,6 +465,47 @@ function createEmotionCardImage(video, record) {
     context.font = '600 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
     const clippedNote = record.note.length > 22 ? `${record.note.slice(0, 22)}...` : record.note;
     context.fillText(clippedNote, 254, 210);
+  }
+
+  if (record.analysis) {
+    const analysis = record.analysis;
+    const accent = analysis.groupColor || '#155e75';
+
+    context.strokeStyle = '#d8e3ed';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(0, 260);
+    context.lineTo(720, 260);
+    context.stroke();
+
+    context.fillStyle = '#172033';
+    context.font = '900 22px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.fillText('현재 후보', 24, 302);
+
+    drawProgressRing(context, 82, 376, 52, analysis.confidence || 0, accent);
+
+    context.fillStyle = accent;
+    context.font = '900 38px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.fillText(analysis.groupLabel || '분석 없음', 164, 356);
+
+    context.fillStyle = '#536b82';
+    context.font = '700 23px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const reason = analysis.reason || '표정 단서를 바탕으로 추정한 후보입니다.';
+    const firstReason = reason.length > 28 ? `${reason.slice(0, 28)}` : reason;
+    const secondReason = reason.length > 28 ? reason.slice(28, 54) : '';
+    context.fillText(firstReason, 164, 398);
+    if (secondReason) {
+      context.fillText(secondReason, 164, 430);
+    }
+
+    const chips = (analysis.detailCandidates || []).slice(0, 4);
+    chips.forEach((candidate, index) => {
+      drawPill(context, 24 + index * 168, 456, 148, 52, candidate.label, candidate.color || accent, candidate.id === record.selectedEmotionId);
+    });
+
+    (analysis.groupRanking || []).slice(0, 6).forEach((item, index) => {
+      drawBarRow(context, item.label, item.score, 24, 534 + index * 30, 672, accent);
+    });
   }
 
   return captureCanvas.toDataURL('image/jpeg', 0.86);
@@ -605,6 +708,25 @@ function App() {
 
   const addRecord = () => {
     const selected = emotionOptions.find((item) => item.id === manualEmotion);
+    const analysis = prediction
+      ? {
+          groupLabel: prediction.group?.label || '분석 없음',
+          groupColor: prediction.group?.color || '#155e75',
+          confidence: prediction.confidence || 0,
+          reason: prediction.group?.reason || '',
+          detailCandidates: (prediction.ranking || []).slice(0, 4).map((item) => ({
+            id: item.id,
+            label: item.label,
+            color: item.color,
+            score: item.score,
+          })),
+          groupRanking: (prediction.groupRanking || []).slice(0, 6).map((item) => ({
+            id: item.id,
+            label: item.label,
+            score: item.score,
+          })),
+        }
+      : null;
     const record = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
@@ -615,6 +737,7 @@ function App() {
         : '분석 없음',
       confidence: prediction?.confidence || 0,
       note: note.trim(),
+      analysis,
       capturedImage: '',
     };
     record.capturedImage = createEmotionCardImage(videoRef.current, record);

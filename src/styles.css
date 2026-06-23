@@ -445,11 +445,11 @@ textarea:focus {
 
 .record-photo {
   width: 150px;
-  height: 86px;
-  object-fit: cover;
+  height: 120px;
+  object-fit: contain;
   border: 1px solid #d7e2eb;
   border-radius: 8px;
-  background: #e5edf4;
+  background: #ffffff;
 }
 
 .record-photo.placeholder {
@@ -589,6 +589,6 @@ textarea:focus {
 
   .record-photo {
     width: 112px;
-    height: 72px;
+    height: 112px;
   }
 }
