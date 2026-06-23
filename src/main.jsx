@@ -560,6 +560,8 @@ function App() {
   const [records, setRecords] = useState(loadRecords);
   const [cameraOn, setCameraOn] = useState(false);
   const [previewRecord, setPreviewRecord] = useState(null);
+  const [emotionPickerOpen, setEmotionPickerOpen] = useState(false);
+  const [showAllEmotions, setShowAllEmotions] = useState(false);
 
   const todayRecords = useMemo(() => {
     const today = new Date().toDateString();
@@ -795,7 +797,9 @@ function App() {
   const topEmotion = prediction?.top;
   const topGroup = prediction?.group;
   const currentOption = topGroup || emotionOptions.find((item) => item.id === (topEmotion?.id || manualEmotion));
-  const selectedEmotionLabel = emotionOptions.find((item) => item.id === manualEmotion)?.label || '보통';
+  const selectedEmotion = emotionOptions.find((item) => item.id === manualEmotion) || emotionOptions.find((item) => item.id === 'ordinary');
+  const selectedEmotionLabel = selectedEmotion?.label || '보통';
+  const recommendedEmotions = prediction?.ranking?.slice(0, 4) || [];
 
   return (
     <main className="app-shell">
@@ -902,21 +906,69 @@ function App() {
               <Check size={18} />
               내가 확인한 감정
             </div>
-            <div className="emotion-grid">
-              {emotionOptions.map((emotion) => (
-                <button
-                  key={emotion.id}
-                  className={manualEmotion === emotion.id ? 'selected' : ''}
-                  onClick={() => {
-                    setManualEmotion(emotion.id);
-                    setEmotionEditedByUser(true);
-                  }}
-                  style={{ '--emotion': emotion.color }}
-                >
-                  {emotion.label}
-                </button>
-              ))}
+
+            <div className="selected-emotion-panel" style={{ '--emotion': selectedEmotion?.color || '#9ca3af' }}>
+              <div>
+                <span>선택한 감정</span>
+                <strong>{selectedEmotionLabel}</strong>
+              </div>
+              <button
+                className="change-emotion-button"
+                onClick={() => {
+                  setEmotionPickerOpen((open) => !open);
+                  setShowAllEmotions(false);
+                }}
+              >
+                바꾸기
+              </button>
             </div>
+
+            {emotionPickerOpen && (
+              <div className="emotion-picker">
+                <p>추천 후보</p>
+                <div className="emotion-suggestions">
+                  {recommendedEmotions.map((emotion) => (
+                    <button
+                      key={emotion.id}
+                      className={manualEmotion === emotion.id ? 'selected' : ''}
+                      onClick={() => {
+                        setManualEmotion(emotion.id);
+                        setEmotionEditedByUser(true);
+                        setEmotionPickerOpen(false);
+                      }}
+                      style={{ '--emotion': emotion.color }}
+                    >
+                      {emotion.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button className="show-all-button" onClick={() => setShowAllEmotions((visible) => !visible)}>
+                  {showAllEmotions ? '전체 감정 접기' : '전체 감정 보기'}
+                </button>
+
+                {showAllEmotions && (
+                  <div className="emotion-grid">
+                    {emotionOptions.map((emotion) => (
+                      <button
+                        key={emotion.id}
+                        className={manualEmotion === emotion.id ? 'selected' : ''}
+                        onClick={() => {
+                          setManualEmotion(emotion.id);
+                          setEmotionEditedByUser(true);
+                          setEmotionPickerOpen(false);
+                          setShowAllEmotions(false);
+                        }}
+                        style={{ '--emotion': emotion.color }}
+                      >
+                        {emotion.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <textarea
               value={note}
               onChange={(event) => setNote(event.target.value)}
