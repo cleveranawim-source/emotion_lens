@@ -559,7 +559,6 @@ function App() {
   const [note, setNote] = useState('');
   const [records, setRecords] = useState(loadRecords);
   const [cameraOn, setCameraOn] = useState(false);
-  const [downloadOnSave, setDownloadOnSave] = useState(true);
   const [previewRecord, setPreviewRecord] = useState(null);
 
   const todayRecords = useMemo(() => {
@@ -744,17 +743,10 @@ function App() {
     };
     record.capturedImage = createEmotionCardImage(videoRef.current, record);
     saveRecords([record, ...records].slice(0, 24));
-    if (downloadOnSave && record.capturedImage) {
-      downloadCapturedImage(record.capturedImage, record);
-    }
     setNote('');
     setEmotionEditedByUser(false);
     setManualEmotion(prediction?.top?.id || 'ordinary');
-    setMessage(
-      downloadOnSave && record.capturedImage
-        ? '기록과 얼굴 캡처를 저장했습니다. 브라우저가 이미지 다운로드를 요청했어요.'
-        : '기록을 저장했습니다.',
-    );
+    setMessage('기록을 저장했습니다. 이미지는 감정 기록에서 눌러 크게 볼 수 있어요.');
   };
 
   const deleteRecord = (id) => {
@@ -931,14 +923,6 @@ function App() {
               placeholder="지금 감정이 생긴 상황을 짧게 적어보세요."
               rows={3}
             />
-            <label className="download-toggle">
-              <input
-                type="checkbox"
-                checked={downloadOnSave}
-                onChange={(event) => setDownloadOnSave(event.target.checked)}
-              />
-              <span>기록할 때 얼굴 캡처 파일도 저장</span>
-            </label>
             <button className="save-button" onClick={addRecord}>
               <ClipboardList size={18} />
               기록하기
@@ -961,7 +945,7 @@ function App() {
 
         <div className="privacy-note">
           <Info size={17} />
-          기록하기를 누르면 얼굴 캡처 1장이 앱 기록에 남고, 옵션이 켜져 있으면 이미지 파일 저장도 요청됩니다. 브라우저에 따라 다운로드 폴더, 사진 앱, 파일 앱 중 한 곳으로 저장될 수 있습니다.
+          기록하기를 누르면 얼굴 캡처 카드가 앱 기록에만 저장됩니다. 파일로 저장하고 싶을 때는 기록 이미지를 눌러 미리보기에서 저장할 수 있습니다.
         </div>
 
         <div className="records-list">

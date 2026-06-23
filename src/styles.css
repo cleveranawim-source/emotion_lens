@@ -387,24 +387,6 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(21, 94, 117, 0.16);
 }
 
-.download-toggle {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 0 0 12px;
-  color: #40566d;
-  font-size: 0.92rem;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.download-toggle input {
-  width: 18px;
-  height: 18px;
-  accent-color: #155e75;
-  flex: 0 0 auto;
-}
-
 .save-button {
   width: 100%;
 }
