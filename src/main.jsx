@@ -427,8 +427,8 @@ function drawBarRow(context, label, score, x, y, width, color) {
   context.fill();
 }
 
-function createEmotionCardImage(video, record) {
-  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+function createEmotionCardImage(video, record, includeFace) {
+  if (includeFace && (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight)) {
     return '';
   }
 
@@ -444,7 +444,26 @@ function createEmotionCardImage(video, record) {
   context.lineWidth = 2;
   context.strokeRect(1, 1, captureCanvas.width - 2, captureCanvas.height - 2);
 
-  drawMirroredCoverVideo(context, video, 16, 22, 208, 156);
+  if (includeFace) {
+    drawMirroredCoverVideo(context, video, 16, 22, 208, 156);
+  } else {
+    drawRoundedRect(context, 16, 22, 208, 156, 14);
+    context.fillStyle = '#e8f0f6';
+    context.fill();
+    context.strokeStyle = '#cfdae5';
+    context.lineWidth = 2;
+    context.stroke();
+
+    context.fillStyle = '#536b82';
+    context.font = '800 24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('사진 제외', 120, 100);
+    context.font = '600 18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.fillText('감정 기록만 저장', 120, 132);
+    context.textAlign = 'start';
+    context.textBaseline = 'alphabetic';
+  }
 
   context.fillStyle = '#536b82';
   context.font = '700 29px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -562,6 +581,7 @@ function App() {
   const [previewRecord, setPreviewRecord] = useState(null);
   const [emotionPickerOpen, setEmotionPickerOpen] = useState(false);
   const [showAllEmotions, setShowAllEmotions] = useState(false);
+  const [includeFaceCapture, setIncludeFaceCapture] = useState(true);
 
   const todayRecords = useMemo(() => {
     const today = new Date().toDateString();
@@ -741,9 +761,10 @@ function App() {
       confidence: prediction?.confidence || 0,
       note: note.trim(),
       analysis,
+      includesFaceCapture: includeFaceCapture,
       capturedImage: '',
     };
-    record.capturedImage = createEmotionCardImage(videoRef.current, record);
+    record.capturedImage = createEmotionCardImage(videoRef.current, record, includeFaceCapture);
     saveRecords([record, ...records].slice(0, 24));
     setNote('');
     setEmotionEditedByUser(false);
@@ -763,7 +784,7 @@ function App() {
         record.selectedEmotion,
         record.predictedEmotion,
         `${record.confidence}%`,
-        record.capturedImage ? '있음' : '없음',
+        record.includesFaceCapture === false ? '제외' : '포함',
         record.note.replaceAll('"', '""'),
       ]),
     ]
@@ -975,6 +996,14 @@ function App() {
               placeholder="지금 감정이 생긴 상황을 짧게 적어보세요."
               rows={3}
             />
+            <label className="capture-toggle">
+              <input
+                type="checkbox"
+                checked={includeFaceCapture}
+                onChange={(event) => setIncludeFaceCapture(event.target.checked)}
+              />
+              <span>얼굴 캡처 포함</span>
+            </label>
             <button className="save-button" onClick={addRecord}>
               <ClipboardList size={18} />
               기록하기
@@ -997,7 +1026,7 @@ function App() {
 
         <div className="privacy-note">
           <Info size={17} />
-          기록하기를 누르면 얼굴 캡처 카드가 앱 기록에만 저장됩니다. 파일로 저장하고 싶을 때는 기록 이미지를 눌러 미리보기에서 저장할 수 있습니다.
+          기록하기를 누르면 감정 카드가 앱 기록에 저장됩니다. 얼굴 캡처 포함 여부는 사용자가 선택할 수 있고, 파일 저장은 기록 이미지를 눌러 미리보기에서 할 수 있습니다.
         </div>
 
         <div className="records-list">

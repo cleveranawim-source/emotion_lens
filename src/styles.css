@@ -451,6 +451,24 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(21, 94, 117, 0.16);
 }
 
+.capture-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  color: #40566d;
+  font-size: 0.94rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.capture-toggle input {
+  width: 19px;
+  height: 19px;
+  accent-color: #155e75;
+  flex: 0 0 auto;
+}
+
 .save-button {
   width: 100%;
 }
