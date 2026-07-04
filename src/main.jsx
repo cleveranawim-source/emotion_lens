@@ -595,6 +595,7 @@ function App() {
   const rafRef = useRef(0);
   const streamRef = useRef(null);
   const lastVideoTimeRef = useRef(-1);
+  const lastDetectRef = useRef(0);
   const importInputRef = useRef(null);
 
   const [status, setStatus] = useState('ready');
@@ -645,7 +646,11 @@ function App() {
 
   const saveRecords = useCallback((nextRecords) => {
     setRecords(nextRecords);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+    } catch {
+      setMessage('저장 공간이 부족해요. 내보내기로 백업한 뒤 오래된 기록을 정리해주세요.');
+    }
   }, []);
 
   const drawOverlay = useCallback((result) => {
@@ -691,9 +696,12 @@ function App() {
       return;
     }
 
-    if (lastVideoTimeRef.current !== video.currentTime) {
+    // 감정 체크인은 고프레임이 필요 없다. 새 프레임이면서 최소 간격(~11fps)이 지났을 때만 감지해 부하를 줄인다.
+    const now = performance.now();
+    if (lastVideoTimeRef.current !== video.currentTime && now - lastDetectRef.current >= 90) {
       lastVideoTimeRef.current = video.currentTime;
-      const result = landmarker.detectForVideo(video, performance.now());
+      lastDetectRef.current = now;
+      const result = landmarker.detectForVideo(video, now);
       drawOverlay(result);
 
       if (result.faceBlendshapes?.[0]?.categories?.length) {
@@ -714,6 +722,10 @@ function App() {
     try {
       setStatus('loading');
       setMessage('카메라를 먼저 여는 중입니다.');
+
+      // 재시작('다시 분석') 시 이전 감지 루프와 카메라 트랙을 정리해 중복 실행·트랙 누수를 막는다.
+      cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
 
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
         throw new Error('camera-api-unavailable');
@@ -1322,4 +1334,7 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+// HMR로 이 모듈이 다시 실행돼도 같은 컨테이너에 root를 중복 생성하지 않도록 재사용한다.
+const container = document.getElementById('root');
+const root = (container.__reactRoot ??= createRoot(container));
+root.render(<App />);
