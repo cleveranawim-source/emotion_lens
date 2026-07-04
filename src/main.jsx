@@ -6,6 +6,7 @@ import {
   Check,
   ClipboardList,
   Download,
+  Eraser,
   Eye,
   Info,
   Pause,
@@ -13,6 +14,8 @@ import {
   RefreshCcw,
   Shield,
   Trash2,
+  Upload,
+  UserPlus,
   VideoOff,
   X,
 } from 'lucide-react';
@@ -138,6 +141,21 @@ const emotionGroups = [
     reason: '큰 표정 변화가 적어 현재는 중립적인 상태에 가까워 보여요.',
   },
 ];
+
+const emotionById = new Map(emotionOptions.map((emotion) => [emotion.id, emotion]));
+
+// 감정 흐름 요약용: 세부 감정의 tone을 큰 결(무드)로 묶는다.
+const moodFamilies = [
+  { key: 'bright', label: '밝음', color: '#f59e0b', tones: ['positive', 'high'] },
+  { key: 'calm', label: '차분', color: '#10b981', tones: ['calm'] },
+  { key: 'low', label: '가라앉음', color: '#60a5fa', tones: ['low'] },
+  { key: 'hard', label: '긴장·힘듦', color: '#8b5cf6', tones: ['tense', 'negative'] },
+  { key: 'neutral', label: '보통', color: '#9ca3af', tones: ['neutral'] },
+];
+
+function moodFamilyOf(tone) {
+  return moodFamilies.find((family) => family.tones.includes(tone)) || moodFamilies[moodFamilies.length - 1];
+}
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -294,6 +312,14 @@ function formatTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+// 표정 단서의 '뚜렷함'을 정성적으로 표현한다.
+// 숫자 %는 정답처럼 보이기 쉬우므로 보조 정보로만 남기고, 표현은 '힌트'의 강도로 순화한다.
+function confidenceBand(confidence) {
+  if (confidence >= 67) return { short: '뚜렷', sentence: '표정 단서가 비교적 뚜렷하게 보여요.' };
+  if (confidence >= 34) return { short: '중간', sentence: '표정 단서가 어느 정도 보여요.' };
+  return { short: '약함', sentence: '표정 단서가 약하게 보여요.' };
 }
 
 function loadRecords() {
@@ -569,6 +595,7 @@ function App() {
   const rafRef = useRef(0);
   const streamRef = useRef(null);
   const lastVideoTimeRef = useRef(-1);
+  const importInputRef = useRef(null);
 
   const [status, setStatus] = useState('ready');
   const [message, setMessage] = useState('카메라를 켜면 표정 단서를 분석합니다.');
@@ -582,10 +609,38 @@ function App() {
   const [emotionPickerOpen, setEmotionPickerOpen] = useState(false);
   const [showAllEmotions, setShowAllEmotions] = useState(false);
   const [includeFaceCapture, setIncludeFaceCapture] = useState(true);
+  const [candidateRevealed, setCandidateRevealed] = useState(false);
 
   const todayRecords = useMemo(() => {
     const today = new Date().toDateString();
     return records.filter((record) => new Date(record.createdAt).toDateString() === today);
+  }, [records]);
+
+  // 감정 흐름: 기록을 시간순(왼→오)으로 나열한 점 + 큰 결(무드) 분포.
+  const flow = useMemo(() => {
+    const points = records
+      .slice()
+      .reverse()
+      .map((record) => ({
+        id: record.id,
+        label: record.selectedEmotion,
+        time: formatTime(record.createdAt),
+        color: emotionById.get(record.selectedEmotionId)?.color || '#9ca3af',
+      }));
+
+    const tally = new Map();
+    records.forEach((record) => {
+      const tone = emotionById.get(record.selectedEmotionId)?.tone || 'neutral';
+      const family = moodFamilyOf(tone);
+      tally.set(family.key, (tally.get(family.key) || 0) + 1);
+    });
+
+    const families = moodFamilies
+      .map((family) => ({ ...family, count: tally.get(family.key) || 0 }))
+      .filter((family) => family.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    return { points, families, total: records.length };
   }, [records]);
 
   const saveRecords = useCallback((nextRecords) => {
@@ -644,8 +699,8 @@ function App() {
       if (result.faceBlendshapes?.[0]?.categories?.length) {
         const summary = summarizeBlendshapes(result.faceBlendshapes[0].categories);
         setPrediction(summary);
-        setManualEmotion((current) => (emotionEditedByUser ? current : summary.top.id));
-        setMessage('표정 단서를 읽고 있어요. 결과는 추정값으로만 봐주세요.');
+        // 앵커링 방지: 앱 추정으로 사용자의 선택을 자동으로 바꾸지 않는다. 감정은 학생이 직접 고른다.
+        setMessage('표정 단서를 읽고 있어요. 감정은 스스로 골라주세요.');
       } else {
         setPrediction(null);
         setMessage('얼굴이 화면 중앙에 오도록 조금만 맞춰주세요.');
@@ -653,7 +708,7 @@ function App() {
     }
 
     rafRef.current = requestAnimationFrame(runDetection);
-  }, [drawOverlay, emotionEditedByUser]);
+  }, [drawOverlay]);
 
   const startCamera = useCallback(async () => {
     try {
@@ -768,12 +823,39 @@ function App() {
     saveRecords([record, ...records].slice(0, 24));
     setNote('');
     setEmotionEditedByUser(false);
-    setManualEmotion(prediction?.top?.id || 'ordinary');
+    setManualEmotion('ordinary');
+    setCandidateRevealed(false);
     setMessage('기록을 저장했습니다. 이미지는 감정 기록에서 눌러 크게 볼 수 있어요.');
   };
 
   const deleteRecord = (id) => {
     saveRecords(records.filter((record) => record.id !== id));
+  };
+
+  const clearAllRecords = () => {
+    if (!records.length) return;
+    if (!window.confirm('이 기기에 저장된 감정 기록을 모두 지울까요? 되돌릴 수 없어요.')) return;
+    saveRecords([]);
+    setPreviewRecord(null);
+    setMessage('저장된 기록을 모두 지웠습니다.');
+  };
+
+  // 공용 기기 대응: 다음 사람에게 넘기기 전에 카메라를 끄고 기록과 진행 상태를 깨끗이 비운다.
+  const handoffNextPerson = () => {
+    if (records.length && !window.confirm('다음 사람에게 넘길게요.\n이 기기의 기록을 모두 지우고 처음 화면으로 돌아갑니다. 계속할까요?')) {
+      return;
+    }
+    stopCamera();
+    saveRecords([]);
+    setPrediction(null);
+    setNote('');
+    setManualEmotion('ordinary');
+    setEmotionEditedByUser(false);
+    setCandidateRevealed(false);
+    setEmotionPickerOpen(false);
+    setShowAllEmotions(false);
+    setPreviewRecord(null);
+    setMessage('처음 화면으로 돌아왔어요. 다음 사람이 카메라를 켜면 됩니다.');
   };
 
   const exportRecords = () => {
@@ -800,6 +882,68 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  // JSON \uBC31\uC5C5/\uC774\uC804: 24\uAC1C cap\uC73C\uB85C \uC0AC\uB77C\uC9C8 \uAE30\uB85D\uC744 \uBCF4\uC874\uD558\uACE0, \uB2E4\uB978 \uAE30\uAE30\u00B7\uC571(Lev Diary)\uC73C\uB85C \uB118\uAE38 \uC218 \uC788\uB294 \uC774\uC2DD\uC6A9 \uD3EC\uB9F7.
+  // \uC5BC\uAD74 \uC774\uBBF8\uC9C0\uB294 \uC6A9\uB7C9\u00B7\uAC1C\uC778\uC815\uBCF4 \uBCF4\uD638\uB97C \uC704\uD574 \uC81C\uC678\uD558\uACE0 \uAC10\uC815 \uB370\uC774\uD130\uB9CC \uB2F4\uB294\uB2E4.
+  const exportJson = () => {
+    if (!records.length) return;
+    const payload = {
+      app: 'emotion-lens',
+      schema: 'emotion-checkin/v1',
+      exportedAt: new Date().toISOString(),
+      count: records.length,
+      records: records.map(({ capturedImage, ...rest }) => rest),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `emotion-lens-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importJson = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const parsed = JSON.parse(await file.text());
+      const incoming = Array.isArray(parsed) ? parsed : parsed?.records;
+      if (!Array.isArray(incoming)) throw new Error('\uAC10\uC815 \uAE30\uB85D \uD615\uC2DD\uC774 \uC544\uB2C8\uC5D0\uC694.');
+
+      const normalized = incoming
+        .filter((item) => item && item.createdAt && item.selectedEmotion)
+        .map((item) => ({
+          id: typeof item.id === 'string' ? item.id : crypto.randomUUID(),
+          createdAt: item.createdAt,
+          selectedEmotionId: item.selectedEmotionId || 'ordinary',
+          selectedEmotion: item.selectedEmotion || '\uBCF4\uD1B5',
+          predictedEmotion: item.predictedEmotion || '\uBD84\uC11D \uC5C6\uC74C',
+          confidence: Number(item.confidence) || 0,
+          note: typeof item.note === 'string' ? item.note : '',
+          analysis: item.analysis || null,
+          includesFaceCapture: item.includesFaceCapture === true,
+          capturedImage: typeof item.capturedImage === 'string' ? item.capturedImage : '',
+        }));
+
+      if (!normalized.length) throw new Error('\uAC00\uC838\uC62C \uAE30\uB85D\uC774 \uC5C6\uC5B4\uC694.');
+
+      const byId = new Map();
+      [...normalized, ...records].forEach((record) => {
+        if (!byId.has(record.id)) byId.set(record.id, record);
+      });
+      const merged = [...byId.values()]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 24);
+
+      saveRecords(merged);
+      setMessage(`${normalized.length}\uAC1C \uAE30\uB85D\uC744 \uAC00\uC838\uC654\uC5B4\uC694. \uC911\uBCF5\uC744 \uC81C\uC678\uD558\uACE0 \uCD5C\uADFC 24\uAC1C\uB97C \uC720\uC9C0\uD569\uB2C8\uB2E4.`);
+    } catch (error) {
+      setMessage(`\uAC00\uC838\uC624\uAE30\uC5D0 \uC2E4\uD328\uD588\uC5B4\uC694. ${error?.message || '\uD30C\uC77C\uC744 \uD655\uC778\uD574\uC8FC\uC138\uC694.'}`.trim());
+    }
+  };
+
   useEffect(() => () => stopCamera(), [stopCamera]);
 
   useEffect(() => {
@@ -821,6 +965,9 @@ function App() {
   const selectedEmotion = emotionOptions.find((item) => item.id === manualEmotion) || emotionOptions.find((item) => item.id === 'ordinary');
   const selectedEmotionLabel = selectedEmotion?.label || '보통';
   const recommendedEmotions = prediction?.ranking?.slice(0, 4) || [];
+  // 스스로 고르기 전까지 앱 추정을 숨겨 앵커링을 막고, 고른 뒤 '비교' 맥락으로 보여준다.
+  const revealCandidate = candidateRevealed || emotionEditedByUser;
+  const band = confidenceBand(prediction?.confidence || 0);
 
   return (
     <main className="app-shell">
@@ -831,7 +978,7 @@ function App() {
               <p className="eyebrow">표정 기반 감정 체크인</p>
               <h1>마음 렌즈</h1>
             </div>
-            <div className="privacy-badge" title="사진과 영상은 저장하지 않습니다.">
+            <div className="privacy-badge" title="기록과 캡처 이미지는 서버로 보내지 않고 이 브라우저(localStorage)에만 저장됩니다.">
               <Shield size={18} />
               로컬 기록
             </div>
@@ -878,54 +1025,72 @@ function App() {
           <div className="result-card">
             <div className="section-title">
               <Eye size={18} />
-              현재 후보
+              앱이 본 표정 단서
             </div>
-            <div className="emotion-meter" style={{ '--accent': currentOption?.color || '#3b82f6' }}>
-              <div className="meter-ring">
-                <span>{prediction ? `${prediction.confidence}%` : '--'}</span>
-              </div>
-              <div>
-                <p className="result-label">{topGroup?.label || '대기 중'}</p>
-                <p className="result-copy">
-                  {topGroup?.reason || '카메라를 켜고 얼굴을 화면 중앙에 맞춰주세요.'}
+            {!revealCandidate ? (
+              <div className="candidate-cover">
+                <p className="candidate-cover-title">먼저 스스로 골라볼까요?</p>
+                <p className="candidate-cover-sub">
+                  앱의 추정은 정답이 아니라 참고용 힌트예요. 지금 내 마음을 직접 고른 뒤, 앱이 본 표정 단서와 비교해보세요.
                 </p>
+                <button className="reveal-button" onClick={() => setCandidateRevealed(true)}>
+                  <Eye size={17} />
+                  앱이 본 단서 비교해보기
+                </button>
               </div>
-            </div>
-
-            {topEmotion && (
-              <div className="detail-candidates">
-                {(prediction?.ranking || []).slice(0, 4).map((item) => (
-                  <button
-                    key={item.id}
-                    className={manualEmotion === item.id ? 'active' : ''}
-                    onClick={() => {
-                      setManualEmotion(item.id);
-                      setEmotionEditedByUser(true);
-                    }}
-                    style={{ '--emotion': item.color }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="bars">
-              {(prediction?.groupRanking || []).slice(0, 6).map((item) => (
-                <div className="bar-row" key={item.id}>
-                  <span>{item.label}</span>
-                  <div className="bar-track">
-                    <div style={{ width: `${Math.round(item.score * 100)}%` }} />
+            ) : (
+              <>
+                <div className="emotion-meter" style={{ '--accent': currentOption?.color || '#3b82f6' }}>
+                  <div className="meter-ring">
+                    <span>{prediction ? band.short : '--'}</span>
+                  </div>
+                  <div>
+                    <p className="result-label">{topGroup ? `혹시 '${topGroup.label}'일까요?` : '대기 중'}</p>
+                    <p className="result-copy">
+                      {topGroup?.reason || '카메라를 켜고 얼굴을 화면 중앙에 맞춰주세요.'}
+                    </p>
+                    {prediction && (
+                      <p className="confidence-fine">{band.sentence} · 앱 추정 확신도 {prediction.confidence}% (참고용)</p>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
+
+                {topEmotion && (
+                  <div className="detail-candidates">
+                    {(prediction?.ranking || []).slice(0, 4).map((item) => (
+                      <button
+                        key={item.id}
+                        className={manualEmotion === item.id ? 'active' : ''}
+                        onClick={() => {
+                          setManualEmotion(item.id);
+                          setEmotionEditedByUser(true);
+                        }}
+                        style={{ '--emotion': item.color }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="bars">
+                  {(prediction?.groupRanking || []).slice(0, 6).map((item) => (
+                    <div className="bar-row" key={item.id}>
+                      <span>{item.label}</span>
+                      <div className="bar-track">
+                        <div style={{ width: `${Math.round(item.score * 100)}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="checkin-card">
             <div className="section-title">
               <Check size={18} />
-              내가 확인한 감정
+              지금 내 마음, 내가 고르기
             </div>
 
             <div className="selected-emotion-panel" style={{ '--emotion': selectedEmotion?.color || '#9ca3af' }}>
@@ -946,23 +1111,27 @@ function App() {
 
             {emotionPickerOpen && (
               <div className="emotion-picker">
-                <p>추천 후보</p>
-                <div className="emotion-suggestions">
-                  {recommendedEmotions.map((emotion) => (
-                    <button
-                      key={emotion.id}
-                      className={manualEmotion === emotion.id ? 'selected' : ''}
-                      onClick={() => {
-                        setManualEmotion(emotion.id);
-                        setEmotionEditedByUser(true);
-                        setEmotionPickerOpen(false);
-                      }}
-                      style={{ '--emotion': emotion.color }}
-                    >
-                      {emotion.label}
-                    </button>
-                  ))}
-                </div>
+                {recommendedEmotions.length > 0 && (
+                  <>
+                    <p>앱이 본 표정 힌트 <span className="picker-hint-tag">참고용</span></p>
+                    <div className="emotion-suggestions">
+                      {recommendedEmotions.map((emotion) => (
+                        <button
+                          key={emotion.id}
+                          className={manualEmotion === emotion.id ? 'selected' : ''}
+                          onClick={() => {
+                            setManualEmotion(emotion.id);
+                            setEmotionEditedByUser(true);
+                            setEmotionPickerOpen(false);
+                          }}
+                          style={{ '--emotion': emotion.color }}
+                        >
+                          {emotion.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
 
                 <button className="show-all-button" onClick={() => setShowAllEmotions((visible) => !visible)}>
                   {showAllEmotions ? '전체 감정 접기' : '전체 감정 보기'}
@@ -1023,16 +1192,69 @@ function App() {
             <p className="eyebrow">오늘 {todayRecords.length}개 기록</p>
             <h2>감정 기록</h2>
           </div>
-          <button className="utility-button" onClick={exportRecords} disabled={!records.length}>
-            <Download size={17} />
-            CSV
-          </button>
+          <div className="records-actions">
+            <button className="utility-button" onClick={handoffNextPerson} title="카메라를 끄고 이 기기의 기록을 비운 뒤 처음 화면으로">
+              <UserPlus size={17} />
+              다음 사람
+            </button>
+            <button className="utility-button" onClick={exportRecords} disabled={!records.length}>
+              <Download size={17} />
+              CSV
+            </button>
+            <button className="utility-button" onClick={exportJson} disabled={!records.length} title="감정 데이터를 JSON으로 백업 (얼굴 이미지 제외)">
+              <Download size={17} />
+              JSON
+            </button>
+            <button className="utility-button" onClick={() => importInputRef.current?.click()} title="JSON 백업 파일에서 기록 가져오기">
+              <Upload size={17} />
+              가져오기
+            </button>
+            <button className="utility-button danger" onClick={clearAllRecords} disabled={!records.length}>
+              <Eraser size={17} />
+              전체 지우기
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={importJson}
+              hidden
+            />
+          </div>
         </div>
 
         <div className="privacy-note">
           <Info size={17} />
-          기록하기를 누르면 감정 카드가 앱 기록에 저장됩니다. 얼굴 캡처 포함 여부는 사용자가 선택할 수 있고, 파일 저장은 기록 이미지를 눌러 미리보기에서 할 수 있습니다.
+          기록하기를 누르면 감정 카드가 이 브라우저에만 저장됩니다. 얼굴 캡처 포함 여부는 직접 선택할 수 있어요. 여러 명이 함께 쓰는 기기라면, 사용 후 <strong>‘다음 사람’</strong> 또는 <strong>‘전체 지우기’</strong>로 내 기록을 정리해 주세요.
         </div>
+
+        {flow.total > 1 && (
+          <div className="flow-card">
+            <div className="flow-head">
+              <span className="flow-title">감정 흐름</span>
+              <span className="flow-sub">최근 {flow.total}개 · 왼쪽이 오래된 기록</span>
+            </div>
+            <div className="flow-track">
+              {flow.points.map((point) => (
+                <span
+                  key={point.id}
+                  className="flow-dot"
+                  style={{ '--dot': point.color }}
+                  title={`${point.time} · ${point.label}`}
+                />
+              ))}
+            </div>
+            <div className="flow-families">
+              {flow.families.map((family) => (
+                <div className="flow-family" key={family.key}>
+                  <span className="flow-family-swatch" style={{ background: family.color }} />
+                  <span className="flow-family-label">{family.label}</span>
+                  <span className="flow-family-count">{family.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="records-list">
           {records.length ? (
