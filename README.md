@@ -29,6 +29,15 @@ localStorage에 저장됩니다. JSON 내보내기는 용량·개인정보 보�
 
 > Lev Diary(감정일기 앱) 연동 설계는 [`docs/lev-diary-integration.md`](docs/lev-diary-integration.md) 참고.
 
+## 수업 자료 (SEL 자기인식)
+
+마음 렌즈를 활용한 45분 수업 세트가 `docs/`에 있습니다.
+
+- 수업지도안: [`docs/수업지도안.md`](docs/수업지도안.md) · 인쇄용 [`docs/마음렌즈_수업지도안.docx`](docs/마음렌즈_수업지도안.docx)
+- 활동지: [`docs/활동지.md`](docs/활동지.md) · 인쇄용 [`docs/마음렌즈_활동지.docx`](docs/마음렌즈_활동지.docx)
+
+핵심 메시지: **"기계도, 표정도 내 마음을 다 알 수는 없어. 내 마음은 내가 제일 잘 알아."**
+
 ## 실행
 
 ```bash
